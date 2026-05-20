@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SDR FM Receiver — PSD Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --input-bg: #21262d;
+    --hover: #1f242b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+  }
+  header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.3s;
+  }
+  .dot.online { background: var(--green); }
+
+  main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .psd-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  #psd-chart {
+    flex: 1;
+    min-height: 400px;
+  }
+
+  aside {
+    width: 300px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  aside h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .control-group label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .control-group input {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .control-group input:focus {
+    border-color: var(--accent);
+  }
+
+  .row { display: flex; gap: 8px; }
+  .row > .control-group { flex: 1; }
+
+  button {
+    padding: 10px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+  }
+  button:hover { opacity: 0.9; }
+  button.stop { background: var(--red); }
+  button.apply { background: #238636; }
+
+  hr { border-color: var(--border); margin: 4px 0; }
+
+  .info-row {
+    font-size: 0.78rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+  .info-row span:last-child { color: var(--text); font-weight: 500; }
+  .info-row .bw-val { color: var(--accent); font-weight: 700; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SDR FM Receiver — Welch PSD Dashboard</h1>
+  <div class="status">
+    <span>SDR:</span> <span class="dot" id="status-dot"></span>
+    <span id="status-label">stopped</span>
+  </div>
+</header>
+
+<main>
+  <div class="psd-panel">
+    <div id="psd-chart"></div>
+  </div>
+
+  <aside>
+    <h2>Controls</h2>
+
+    <div class="control-group">
+      <label>Center Frequency (MHz)</label>
+      <input type="number" id="ctrl-freq" placeholder="105.7" step="0.1" min="24" max="1766">
+    </div>
+
+    <div class="control-group">
+      <label>Gain (dB)</label>
+      <input type="number" id="ctrl-gain" placeholder="20.0" step="0.5" min="0" max="49.6">
+    </div>
+
+    <div class="control-group">
+      <label>SPAN (kHz) — set 0 for auto‑scale</label>
+      <input type="number" id="ctrl-span" placeholder="0" step="10" min="0" max="5000">
+    </div>
+
+    <div class="control-group">
+      <label>NFFT</label>
+      <input type="number" id="ctrl-nfft" placeholder="2048" step="64" min="64">
+    </div>
+
+    <div class="control-group">
+      <label>nperseg</label>
+      <input type="number" id="ctrl-nperseg" placeholder="2048" step="64" min="64">
+    </div>
+
+    <div class="control-group">
+      <label>noverlap</label>
+      <input type="number" id="ctrl-noverlap" placeholder="1024" step="64" min="0">
+    </div>
+
+    <div style="display:flex; gap:8px; margin-top:4px;">
+      <button id="btn-start">Start SDR</button>
+      <button id="btn-stop" class="stop">Stop SDR</button>
+    </div>
+
+    <button id="btn-apply" class="apply">Apply Config</button>
+
+    <hr>
+
+    <h2>Live Info</h2>
+    <div class="info-row"><span>Tuned</span><span id="info-freq">--</span></div>
+    <div class="info-row"><span>Gain</span><span id="info-gain">--</span></div>
+    <div class="info-row"><span>SPAN</span><span id="info-span">--</span></div>
+    <div class="info-row"><span>Bandwidth</span><span id="info-bw" class="bw-val">--</span></div>
+    <div class="info-row"><span>Clipping</span><span id="info-clip">--</span></div>
+    <div class="info-row"><span>FS</span><span id="info-fs">240 kHz</span></div>
+  </aside>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
