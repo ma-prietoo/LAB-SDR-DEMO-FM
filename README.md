@@ -404,6 +404,10 @@ Durante la ejecución del sistema se logró:
 - Reproducir audio en tiempo real con una tasa final de 48 kHz.
 - Mantener estabilidad al separar captura, análisis espectral y reproducción en hilos independientes.
 
+### Demostración en video
+
+[Ver la demostración del receptor FM](media/demo-receptor-fm.mp4)
+
 ## Limitaciones y consideraciones
 
 - La calidad del audio depende de la antena, la ganancia del RTL-SDR y la intensidad de la emisora recibida.
