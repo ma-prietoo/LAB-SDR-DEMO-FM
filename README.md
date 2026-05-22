@@ -4,11 +4,58 @@ Dashboard web con demodulación FM, Welch PSD en tiempo real, y controles intera
 de sintonización.  Todo el procesamiento de señal corre en Python puro sobre
 librerías científicas estándar (NumPy, SciPy).
 
----
+## Objetivo del laboratorio
+
+Implementar un receptor FM en tiempo real usando un RTL-SDR y Linux, capaz de captar señales de radio mediante una antena, procesar las muestras I/Q, visualizar el espectro mediante PSD y demodular una emisora FM para reproducir audio.
+
+El sistema se divide en dos rutas principales:
+
+- Ruta espectral: análisis de potencia y localización de la señal en frecuencia.
+- Ruta de audio: demodulación FM y reproducción en tiempo real.
+
+## Materiales y entorno de trabajo
+
+| Elemento | Descripción |
+|---|---|
+| RTL-SDR | Receptor definido por software usado para capturar muestras I/Q |
+| Antena | Captura de señales FM del ambiente |
+| Linux | Sistema operativo usado para el desarrollo y ejecución del código |
+| Python | Lenguaje principal para adquisición, procesamiento DSP y servidor web |
+| NumPy / SciPy | Procesamiento numérico, filtros, Welch PSD y demodulación |
+| Flask + SocketIO | Backend para visualización en tiempo real |
+| Plotly.js | Visualización del espectro en el navegador |
+| sounddevice | Reproducción del audio demodulado |
+
+## Diagrama general del sistema
+
+El flujo completo del sistema parte de la señal captada por la antena y digitalizada por el RTL-SDR como muestras complejas I/Q.
+
+```text
+Antena
+  │
+  ▼
+RTL-SDR
+  │
+  ▼
+Muestras I/Q
+  │
+  ├──────────────────────────────┐
+  ▼                              ▼
+Proceso 1: Análisis espectral    Proceso 2: Audio en tiempo real
+Buffer I/Q                       Buffer rápido
+  │                              │
+  ▼                              ▼
+PSD Welch                        Demodulación FM
+  │                              │
+  ▼                              ▼
+Visualización espectral          Reproducción de audio
+Fc, BW, P                        Parlantes
+
+```
 
 ## Estructura del proyecto
 
-```
+```text
 SDR-demo/
 ├── scripts/                    # Módulos de DSP (sin dependencias web)
 │   ├── config.py               # Parámetros globales (dataclass mutable)
@@ -25,8 +72,6 @@ SDR-demo/
 ├── main.py                     # Entry point
 └── requirements.txt
 ```
-
----
 
 ## Cómo ejecutar
 
@@ -48,9 +93,8 @@ Abrir `http://localhost:5000`.  El dashboard permite cambiar en tiempo real:
 | nperseg          | Muestras por segmento en Welch                     |
 | noverlap         | Solapamiento entre segmentos en Welch              |
 
----
 
-# Cómo se logra la demodulación FM
+## Cómo se logra la demodulación FM
 
 Esta es la parte central del proyecto.  La cadena DSP completa es:
 
@@ -89,6 +133,68 @@ Muestras I/Q (240 kS/s)
 └────────┬─────────────┘
          ▼
     Audio 48 kHz float32 → parlantes
+```
+
+## Adquisición de muestras I/Q
+
+El RTL-SDR entrega la señal capturada como muestras complejas I/Q:
+
+$$
+x[n] = I[n] + jQ[n]
+$$
+
+La componente `I` representa la parte en fase y `Q` la parte en cuadratura. Esta representación compleja permite conservar información de amplitud y fase de la señal recibida, lo cual es fundamental para:
+
+- Estimar el espectro mediante PSD.
+- Detectar la posición de una emisora dentro del ancho de banda capturado.
+- Demodular FM usando diferencias de fase entre muestras consecutivas.
+
+Las muestras I/Q son el punto común desde el cual el sistema se divide en dos rutas: análisis espectral y demodulación de audio.
+
+
+## Proceso 1: Buffer, PSD y localización espectral
+
+La primera ruta del sistema toma bloques de muestras I/Q y los almacena en un buffer destinado al análisis espectral. Sobre ese buffer se calcula la densidad espectral de potencia usando Welch.
+
+Esta ruta permite visualizar:
+
+| Magnitud | Significado |
+|---|---|
+| `Fc` | Frecuencia central configurada en el RTL-SDR |
+| `BW` | Ancho de banda ocupado por la señal |
+| `P` | Potencia relativa estimada desde la PSD |
+
+La visualización permite identificar si existe una emisora dentro del rango capturado, observar su ancho espectral y ajustar la sintonización desde el dashboard.
+
+
+## Proceso 2: Buffer rápido, demodulación y reproducción
+
+La segunda ruta prioriza baja latencia. Las muestras I/Q pasan por una cola de audio y son procesadas inmediatamente por la cadena de demodulación FM.
+
+A diferencia de la ruta espectral, esta ruta no espera acumular grandes bloques para visualización. Su objetivo es mantener continuidad temporal para evitar cortes, clicks o pérdidas de fase en el audio.
+
+El flujo es:
+
+```text
+Buffer rápido I/Q
+    │
+    ▼
+Filtro RF
+    │
+    ▼
+Discriminador polar
+    │
+    ▼
+Decimación
+    │
+    ▼
+Filtro de audio + de-emphasis
+    │
+    ▼
+Normalización
+    │
+    ▼
+Reproducción 48 kHz
 ```
 
 ## 1. Filtro RF — Aislando la emisora
@@ -244,7 +350,7 @@ portadora — suficiente para cubrir los ~180 kHz de ancho de banda total de
 una emisora FM broadcast (regla de Carson: 2 × (75 kHz + 15 kHz) = 180 kHz).
 
 
-# Welch PSD y ancho de banda ocupado
+## Welch PSD y ancho de banda ocupado
 
 La PSD se estima con el método de Welch (`scipy.signal.welch`) sobre las
 muestras I/Q crudas, usando ventana Hann:
@@ -267,7 +373,7 @@ Dos líneas verticales rojas punteadas marcan los bordes del ancho de
 banda sobre la gráfica, con el valor numérico anotado entre ellas.
 
 
-# Arquitectura de hilos
+## Arquitectura de hilos
 
 El sistema usa tres hilos independientes, igual que `lab.py`:
 
@@ -287,8 +393,27 @@ no desde el hilo de Flask.  Esto evita segfaults por acceso cross-thread
 a libusb y permite que el botón Stop del dashboard apague limpiamente
 el pipeline sin matar el servidor.
 
+## Resultados observados
 
-# Lecciones clave 
+Durante la ejecución del sistema se logró:
+
+- Capturar señales FM usando una antena conectada al RTL-SDR.
+- Visualizar el espectro de la señal recibida en tiempo real.
+- Identificar la frecuencia central de sintonización y el ancho de banda ocupado.
+- Demodular una emisora FM usando el discriminador polar.
+- Reproducir audio en tiempo real con una tasa final de 48 kHz.
+- Mantener estabilidad al separar captura, análisis espectral y reproducción en hilos independientes.
+
+## Limitaciones y consideraciones
+
+- La calidad del audio depende de la antena, la ganancia del RTL-SDR y la intensidad de la emisora recibida.
+- Una ganancia demasiado alta puede saturar el receptor.
+- Una ganancia demasiado baja reduce la SNR y aumenta el ruido audible.
+- La tasa de muestreo debe ser suficientemente alta para cubrir el ancho de banda FM, pero no tan alta como para generar pérdidas por carga de CPU o USB.
+- La demodulación FM requiere continuidad entre bloques; perder muestras afecta directamente la fase y produce artefactos audibles.
+
+
+## Lecciones clave 
 
 1. **La continuidad temporal lo es todo en FM.**  Perder muestras I/Q
    destruye la fase y produce artefactos audibles.  Usar colas bloqueantes
